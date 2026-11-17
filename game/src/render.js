@@ -2,7 +2,7 @@
 // HUD and the title / pause / end screens. Nothing here changes state;
 // stepGame in game.js owns the rules, this file only paints them.
 
-import { VIEW_W, VIEW_H, TARGET_SCORE, HULL_MAX, RUN_SECONDS, COMBO_HOLD } from './game.js';
+import { VIEW_W, VIEW_H, TARGET_SCORE, HULL_MAX, RUN_SECONDS, COMBO_HOLD, ROCK_DAMAGE, REPAIR_AMOUNT } from './game.js';
 
 const INK = '#e8f6ff';
 const CYAN = '#26e7ff';
@@ -24,13 +24,16 @@ export function draw(ctx, g, muted) {
     ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
   }
   drawBackdrop(ctx, g);
+  drawIncomingWarnings(ctx, g);
   for (const p of g.pickups) drawRepair(ctx, p, g.time);
   for (const s of g.shards) drawShard(ctx, s, g.time);
   for (const r of g.rocks) drawRock(ctx, r);
   drawParticles(ctx, g.parts);
   if (g.mode !== 'title') drawShip(ctx, g);
+  drawFloats(ctx, g);
   ctx.restore();
 
+  if (g.mode === 'playing' && g.hull <= ROCK_DAMAGE) drawLowHullWarning(ctx, g);
   if (g.mode !== 'title') drawHud(ctx, g, muted);
   if (g.mode === 'title') drawTitle(ctx, g);
   else if (g.mode === 'paused') drawPause(ctx);
@@ -143,6 +146,55 @@ function drawRepair(ctx, p, time) {
   ctx.restore();
 }
 
+// Rocks still off screen but about to enter get a pulsing marker on the
+// edge they will cross, so an arrival is telegraphed, never a surprise.
+function drawIncomingWarnings(ctx, g) {
+  if (g.mode !== 'playing' && g.mode !== 'paused') return;
+  const pulse = 0.55 + 0.45 * Math.sin(g.time * 9);
+  ctx.save();
+  ctx.fillStyle = RED;
+  for (const r of g.rocks) {
+    const outside = r.x < -r.r || r.x > VIEW_W + r.r || r.y < -r.r || r.y > VIEW_H + r.r;
+    if (!outside) continue;
+    const near = r.x > -140 && r.x < VIEW_W + 140 && r.y > -140 && r.y < VIEW_H + 140;
+    if (!near) continue;
+    const cx = Math.max(16, Math.min(VIEW_W - 16, r.x));
+    const cy = Math.max(16, Math.min(VIEW_H - 16, r.y));
+    ctx.globalAlpha = pulse;
+    ctx.beginPath();
+    if (r.x < -r.r) { ctx.moveTo(6, cy - 10); ctx.lineTo(22, cy); ctx.lineTo(6, cy + 10); }
+    else if (r.x > VIEW_W + r.r) { ctx.moveTo(VIEW_W - 6, cy - 10); ctx.lineTo(VIEW_W - 22, cy); ctx.lineTo(VIEW_W - 6, cy + 10); }
+    else if (r.y < -r.r) { ctx.moveTo(cx - 10, 6); ctx.lineTo(cx + 10, 6); ctx.lineTo(cx, 22); }
+    else { ctx.moveTo(cx - 10, VIEW_H - 6); ctx.lineTo(cx + 10, VIEW_H - 6); ctx.lineTo(cx, VIEW_H - 22); }
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Floating score popups: what each event was worth, rising and fading.
+function drawFloats(ctx, g) {
+  ctx.save();
+  ctx.font = `bold 17px ${FONT}`;
+  ctx.textAlign = 'center';
+  for (const f of g.floats) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, f.life / f.max));
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.restore();
+}
+
+// One hit from death, the screen edge pulses red until a repair lands.
+function drawLowHullWarning(ctx, g) {
+  ctx.save();
+  ctx.globalAlpha = 0.16 + 0.13 * Math.sin(g.time * 6);
+  ctx.strokeStyle = RED;
+  ctx.lineWidth = 12;
+  ctx.strokeRect(6, 6, VIEW_W - 12, VIEW_H - 12);
+  ctx.restore();
+}
+
 function drawParticles(ctx, parts) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -246,13 +298,15 @@ function drawHud(ctx, g, muted) {
   ctx.font = `bold 15px ${FONT}`;
   ctx.fillStyle = INK;
   ctx.fillText(`/ ${TARGET_SCORE} TARGET`, 24, 78);
+  // A gold progress bar: how much of the run's goal is already banked.
+  bar(ctx, 24, 98, 180, 7, g.score / TARGET_SCORE, GOLD);
 
   // Combo multiplier with its draining hold bar.
   if (g.combo > 1) {
     ctx.fillStyle = MAGENTA;
     ctx.font = `bold 24px ${FONT}`;
-    ctx.fillText(`COMBO x${fmtCombo(g.combo)}`, 24, 104);
-    bar(ctx, 24, 134, 120, 6, g.comboTimer / COMBO_HOLD, MAGENTA);
+    ctx.fillText(`COMBO x${fmtCombo(g.combo)}`, 24, 118);
+    bar(ctx, 24, 148, 120, 6, g.comboTimer / COMBO_HOLD, MAGENTA);
   }
 
   // Time, top centre: a bar plus the seconds left.
@@ -299,7 +353,7 @@ function centre(ctx, text, y, font, color, glowColor) {
 function drawTitle(ctx, g) {
   ctx.save();
   centre(ctx, 'NEON DRIFT', 190, `bold 92px ${FONT}`, CYAN, CYAN);
-  centre(ctx, 'Bank 1500 points of star shards in 90 seconds —', 310, `22px ${FONT}`, INK);
+  centre(ctx, `Bank ${TARGET_SCORE} points of star shards in ${RUN_SECONDS} seconds —`, 310, `22px ${FONT}`, INK);
   centre(ctx, 'and do not let the asteroid field take your hull.', 342, `22px ${FONT}`, INK);
 
   ctx.font = `19px ${FONT}`;
@@ -308,14 +362,14 @@ function drawTitle(ctx, g) {
   const lines = [
     'WASD / ARROW KEYS — thrust and drift',
     'Collect shards to raise your COMBO multiplier',
-    'Asteroid hit: -34 hull · Green cell: +25 hull',
+    `Asteroid hit: -${ROCK_DAMAGE} hull · Green cell: +${REPAIR_AMOUNT} hull`,
     'P pause · M mute',
   ];
   lines.forEach((line, i) => ctx.fillText(line, VIEW_W / 2, 420 + i * 32));
   ctx.textAlign = 'left';
 
   if (Math.sin(g.time * 3.4) > -0.25) {
-    centre(ctx, 'CLICK OR PRESS ENTER TO LAUNCH', 592, `bold 26px ${FONT}`, GOLD, GOLD);
+    centre(ctx, 'CLICK OR PRESS ANY MOVE KEY TO LAUNCH', 592, `bold 26px ${FONT}`, GOLD, GOLD);
   }
   ctx.restore();
 }
@@ -352,7 +406,7 @@ function drawEnd(ctx, g, won) {
     'rgba(232, 246, 255, 0.9)',
   );
   if (Math.sin(g.time * 3.4) > -0.25) {
-    centre(ctx, 'PRESS R OR CLICK TO FLY AGAIN', 540, `bold 24px ${FONT}`, CYAN, CYAN);
+    centre(ctx, 'PRESS R, ENTER OR CLICK TO FLY AGAIN', 540, `bold 24px ${FONT}`, CYAN, CYAN);
   }
   ctx.restore();
 }

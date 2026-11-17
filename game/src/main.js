@@ -6,9 +6,9 @@
 // window.__shotReady, which is how the screenshots in /screenshots were
 // taken. It changes nothing about how the game itself plays.
 
-import { createGame, startRun, togglePause, stepGame, stageScene } from './game.js';
+import { createGame, startRun, togglePause, stepGame, stageScene, TARGET_SCORE } from './game.js';
 import { draw } from './render.js';
-import { initInput, axisX, axisY, takePress, takeClick, clearTransient } from './input.js';
+import { initInput, axisX, axisY, takePress, takeAnyPress, takeClick, clearTransient } from './input.js';
 import { ensureAudio, setMuted, isMuted } from './audio.js';
 
 const canvas = document.getElementById('game');
@@ -48,25 +48,33 @@ function runLoop() {
   requestAnimationFrame(frame);
 }
 
+// The keys a player naturally reaches for first: any of them, or a click,
+// launches from the title screen, so nobody hunts for the one right key.
+const LAUNCH_KEYS = [
+  'Enter', 'Space',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD',
+];
+
 // One-shot presses and clicks drive the screens around the run itself.
 function handleControls() {
   if (takePress('KeyM')) setMuted(!isMuted());
 
   if (game.mode === 'title') {
-    if (takePress('Enter') || takeClick()) {
+    if (takeAnyPress(LAUNCH_KEYS) || takeClick()) {
       startRun(game);
       clearTransient();
     }
     return;
   }
   if (game.mode === 'won' || game.mode === 'lost') {
-    if (takePress('KeyR') || takeClick()) {
+    if (takePress('KeyR') || takeAnyPress(['Enter', 'Space']) || takeClick()) {
       startRun(game);
       clearTransient();
     }
     return;
   }
-  if (takePress('KeyP')) togglePause(game);
+  if (takePress('KeyP') || (game.mode === 'paused' && takePress('Enter'))) togglePause(game);
 }
 
 // Keep the screen-reader status line roughly current without chattering.
@@ -75,7 +83,7 @@ function announce() {
   if (!status) return;
   const text =
     game.mode === 'playing'
-      ? `Score ${game.score} of 1500, hull ${Math.max(0, Math.ceil(game.hull))}, ${Math.ceil(game.timeLeft)} seconds left`
+      ? `Score ${game.score} of ${TARGET_SCORE}, hull ${Math.max(0, Math.ceil(game.hull))}, ${Math.ceil(game.timeLeft)} seconds left`
       : game.mode;
   if (text !== lastAnnounced) {
     lastAnnounced = text;

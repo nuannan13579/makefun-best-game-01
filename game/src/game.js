@@ -1,7 +1,7 @@
-// Neon Drift's rules and state. One run: 90 seconds to bank 1500 points
+// Neon Drift's rules and state. One run: 90 seconds to bank 1300 points
 // by collecting star shards. Shards feed a combo multiplier that grows
 // with every catch and drains when you stop collecting. Asteroids cost
-// hull; three good hits end the run. Reach the target to win.
+// hull; four good hits end the run. Reach the target to win.
 
 import { makeShard, makeAsteroid, makeRepair, burst, stepParticles, stepDrifter } from './entities.js';
 import { createShip, resetShip, stepShip } from './player.js';
@@ -10,14 +10,14 @@ import { sfx } from './audio.js';
 export const VIEW_W = 1280;
 export const VIEW_H = 800;
 export const RUN_SECONDS = 90;
-export const TARGET_SCORE = 1500;
+export const TARGET_SCORE = 1300;
 export const SHARD_POINTS = 10;
 export const HULL_MAX = 100;
-export const ROCK_DAMAGE = 34;
+export const ROCK_DAMAGE = 25;
 export const REPAIR_AMOUNT = 25;
 export const COMBO_STEP = 0.25;
 export const COMBO_MAX = 6;
-export const COMBO_HOLD = 3.5; // seconds a combo survives without a catch
+export const COMBO_HOLD = 4.5; // seconds a combo survives without a catch
 
 // Small seeded PRNG so the starfield and the screenshot scenes are the
 // same on every load. Live spawning uses Math.random instead.
@@ -52,6 +52,7 @@ export function createGame() {
     rocks: [],
     pickups: [],
     parts: [],
+    floats: [],
     score: 0,
     combo: 1,
     comboTimer: 0,
@@ -62,8 +63,8 @@ export function createGame() {
     collected: 0,
     shake: 0,
     shardClock: 0,
-    rockClock: 1.2,
-    repairClock: 9,
+    rockClock: 2.6,
+    repairClock: 7,
   };
 }
 
@@ -73,6 +74,7 @@ export function startRun(g) {
   g.rocks = [];
   g.pickups = [];
   g.parts = [];
+  g.floats = [];
   g.score = 0;
   g.combo = 1;
   g.comboTimer = 0;
@@ -83,8 +85,8 @@ export function startRun(g) {
   g.collected = 0;
   g.shake = 0;
   g.shardClock = 0;
-  g.rockClock = 1.4;
-  g.repairClock = 9;
+  g.rockClock = 2.6;
+  g.repairClock = 7;
   g.loseReason = '';
   g.mode = 'playing';
   sfx.launch();
@@ -108,6 +110,22 @@ function endRun(g, won, reason) {
   }
 }
 
+// --- floating score popups -------------------------------------------------
+// Every scoring event leaves a short-lived text that rises and fades, so
+// the player sees exactly what each catch, repair and hit was worth.
+
+export function addFloat(g, x, y, text, color) {
+  g.floats.push({ x, y, text, color, life: 0.9, max: 0.9 });
+}
+
+function stepFloats(g, dt) {
+  for (const f of g.floats) {
+    f.life -= dt;
+    f.y -= 46 * dt;
+  }
+  g.floats = g.floats.filter((f) => f.life > 0);
+}
+
 // --- spawning ------------------------------------------------------------
 
 function spawnShard(g) {
@@ -115,7 +133,7 @@ function spawnShard(g) {
   for (let tries = 0; tries < 12; tries++) {
     const x = 50 + Math.random() * (VIEW_W - 100);
     const y = 90 + Math.random() * (VIEW_H - 150);
-    if (Math.hypot(x - g.ship.x, y - g.ship.y) > 150) {
+    if (Math.hypot(x - g.ship.x, y - g.ship.y) > 130) {
       g.shards.push(makeShard(x, y));
       return;
     }
@@ -135,7 +153,7 @@ function spawnRock(g) {
   const ty = VIEW_H * (0.2 + Math.random() * 0.6);
   const dist = Math.hypot(tx - x, ty - y) || 1;
   const ramp = g.elapsed / RUN_SECONDS;
-  const speed = 70 + ramp * 120 + Math.random() * 60;
+  const speed = 55 + ramp * 80 + Math.random() * 40;
   const r = 16 + Math.random() * 26;
   g.rocks.push(makeAsteroid(x, y, ((tx - x) / dist) * speed, ((ty - y) / dist) * speed, r));
 }
@@ -151,6 +169,7 @@ function spawnRepair(g) {
 export function stepGame(g, dt, ax, ay) {
   g.time += dt;
   stepParticles(g.parts, dt);
+  stepFloats(g, dt);
   if (g.shake > 0) g.shake -= dt;
 
   if (g.mode === 'title' || g.mode === 'won' || g.mode === 'lost') {
@@ -171,24 +190,25 @@ export function stepGame(g, dt, ax, ay) {
 
   // Shards: keep a handful in play at all times.
   g.shardClock -= dt;
-  if (g.shardClock <= 0 && g.shards.length < 7) {
+  if (g.shardClock <= 0 && g.shards.length < 8) {
     spawnShard(g);
-    g.shardClock = 0.8;
+    g.shardClock = 0.65;
   }
 
-  // Asteroids arrive faster and quicker the longer the run goes.
+  // Asteroids arrive faster and quicker the longer the run goes, but the
+  // opening seconds stay sparse so a new pilot finds their feet first.
   g.rockClock -= dt;
   if (g.rockClock <= 0) {
     spawnRock(g);
     const ramp = g.elapsed / RUN_SECONDS;
-    g.rockClock = 1.15 - ramp * 0.77 + Math.random() * 0.25;
+    g.rockClock = 1.6 - ramp * 0.65 + Math.random() * 0.3;
   }
 
   // A repair cell every so often, while the hull needs one.
   g.repairClock -= dt;
   if (g.repairClock <= 0) {
     if (g.hull < HULL_MAX - 5 && g.pickups.length === 0) spawnRepair(g);
-    g.repairClock = 14;
+    g.repairClock = 11;
   }
 
   for (const s of g.shards) stepDrifter(s, dt);
@@ -211,7 +231,9 @@ function collide(g) {
 
   g.shards = g.shards.filter((s) => {
     if (!reach(s)) return true;
-    g.score += Math.round(SHARD_POINTS * g.combo);
+    const points = Math.round(SHARD_POINTS * g.combo);
+    g.score += points;
+    addFloat(g, s.x, s.y - 16, `+${points}`, '#ffd94a');
     g.combo = Math.min(COMBO_MAX, g.combo + COMBO_STEP);
     g.maxCombo = Math.max(g.maxCombo, g.combo);
     g.comboTimer = COMBO_HOLD;
@@ -224,6 +246,7 @@ function collide(g) {
   g.pickups = g.pickups.filter((p) => {
     if (!reach(p)) return true;
     g.hull = Math.min(HULL_MAX, g.hull + REPAIR_AMOUNT);
+    addFloat(g, p.x, p.y - 18, `+${REPAIR_AMOUNT} HULL`, '#3dff8e');
     burst(g.parts, p.x, p.y, '#3dff8e', 16, 200);
     sfx.repair();
     return false;
@@ -231,9 +254,13 @@ function collide(g) {
 
   if (ship.invuln <= 0) {
     for (const r of g.rocks) {
-      if (!reach(r)) continue;
+      // A rock's drawn outline bulges past its stony core (verts run 0.7
+      // to 1.25 of r), so the hit test uses the core: grazing a drawn
+      // corner does not cost hull.
+      if (Math.hypot(r.x - ship.x, r.y - ship.y) >= r.r * 0.82 + ship.radius - 2) continue;
       g.hull -= ROCK_DAMAGE;
-      ship.invuln = 1.2;
+      addFloat(g, ship.x, ship.y - 26, `-${ROCK_DAMAGE}`, '#ff5470');
+      ship.invuln = 1.5;
       g.shake = 0.35;
       burst(g.parts, ship.x, ship.y, '#ff7847', 22, 280);
       sfx.hit();
@@ -275,7 +302,7 @@ export function stageScene(g, scene) {
   // 'play' and 'action': mid-run states, action the tenser of the two.
   const tense = scene === 'action';
   g.mode = 'playing';
-  g.score = tense ? 1240 : 860;
+  g.score = tense ? 1090 : 860;
   g.combo = tense ? 5.25 : 3.5;
   g.comboTimer = 2.6;
   g.maxCombo = g.combo;
@@ -292,6 +319,7 @@ export function stageScene(g, scene) {
   decorateField(g, rng, tense ? 6 : 5, tense ? 8 : 6);
   g.pickups.push(makeRepair(tense ? 250 : 1010, tense ? 620 : 210, rng));
   burst(g.parts, g.ship.x - 90, g.ship.y + 50, '#ffd94a', 10, 150, rng);
+  if (tense) addFloat(g, g.ship.x + 44, g.ship.y - 34, '+50', '#ffd94a');
 }
 
 function startRunQuiet(g) {

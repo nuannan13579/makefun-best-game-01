@@ -51,6 +51,18 @@ export function takePress(code) {
   return true;
 }
 
+// True once when any of the given codes was pressed since the last call;
+// consumes every queued press, so one gesture never fires two actions.
+export function takeAnyPress(codes) {
+  for (const code of codes) {
+    if (pressed.has(code)) {
+      pressed.clear();
+      return true;
+    }
+  }
+  return false;
+}
+
 // True once per pointer click since the last call.
 export function takeClick() {
   const was = clicked;
